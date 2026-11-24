@@ -1,0 +1,14 @@
+[project]
+name = "ps5-price-watcher"
+version = "0.2.0"
+description = "Telegram price watcher for the PS5 Digital Edition 825 GB in Germany"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+addopts = "-q -m 'not live'"
+markers = [
+    "live: real network requests to retailer websites (run explicitly with: pytest -m live tests/live -s)",
+]

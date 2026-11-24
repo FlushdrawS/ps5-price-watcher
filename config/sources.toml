@@ -1,0 +1,153 @@
+# PS5 Price Watcher configuration
+# ---------------------------------------------------------------------------
+# Nothing in this file is secret. Telegram credentials go into GitHub Secrets
+# (or a local .env), never here.
+#
+# Evidence for every URL below: docs/LIVE_RESEARCH_2026-11-24.md
+# (observed in a desktop Chrome browser on 2026-11-24, read-only).
+# A browser is NOT the bot's HTTP client, so NO source is marked
+# `integration_tested` yet. See README "Making a source verified".
+#
+# HOW A RETAILER RESULT BECOMES "VERIFIED"
+#   url + integration_tested = true (backed by an evidence/probe/... file)
+#   + EUR price from structured data / tested site parser, printed on the page
+#   + identity = PS5 Digital 825 GB (EAN or title or url_identity_verified)
+#   + shipping known  + seller policy passes  + plausible price
+# The PURCHASE ALERT additionally needs: in stock (not contradicted by the
+# page text) and total incl. shipping <= target_total_eur.
+# ---------------------------------------------------------------------------
+
+[settings]
+target_total_eur = 500.00
+timezone = "Europe/Berlin"
+normal_interval_hours = 3        # check cadence Mon-Thu, Sat, Sun
+friday_interval_minutes = 15     # check cadence on Fridays (Berlin time)
+report_interval_hours = 3        # full Telegram status report every 3 h, Fridays included
+significant_drop_eur = 10.00     # a drop counts if >= 10 EUR ...
+significant_drop_pct = 3.0       # ... or >= 3 %
+target_reminder_hours = 24       # re-send an active deal alert after N hours (0 = never)
+notify_unverified_candidates = true   # also alert (clearly labelled) on unverified listings <= target
+notify_out_of_stock = true
+failure_alert_after = 4          # warn after N consecutive failed checks of one source
+min_plausible_eur = 250          # sanity bounds: prices outside are never "verified"
+max_plausible_eur = 1500         # (observed market prices on 2026-11-24 were 599.99 - 1299.99)
+request_timeout_s = 25
+delay_between_sources_s = 2.0
+history_retention_days = 400
+
+[product]
+name = "PlayStation 5 Digital Edition 825 GB (CFI-2100 model group, EU model CFI-2116, 'E-Chassis')"
+# Sony's EAN for the 825 GB Digital Edition. Seen live on 2026-11-24 at
+# Alternate (JSON-LD + datasheet), MediaMarkt and Saturn (article 3012188),
+# and expert (EAN search resolved to the product).
+expected_gtins = ["0711719020837"]
+# Disqualifying EANs: 2-controller bundle (seen as MediaMarkt/Saturn variant
+# 3020826, 649.99 EUR) and the EA SPORTS FC 26 bundle.
+reject_gtins = ["0711719022633", "0711719021926"]
+extra_exclude_terms = []
+
+# ---------------------------------------------------------------------------
+# Sources
+#   kind       "retailer" | "comparison"
+#   fetcher    "http" (default) | "playwright" (headless Chromium)
+#   extractor  "generic" (JSON-LD/microdata) | "amazon" | "ceconomy" | "idealo"
+#   first_party_shop       shop has no marketplace -> shop itself is the seller
+#   required_seller        seller name must contain one of these
+#   url_identity_verified  a person confirmed this URL is the 825 GB console
+# ---------------------------------------------------------------------------
+
+[[sources]]
+id = "sony"
+name = "Sony (playstation.com)"
+# direct.playstation.com/de-de/buy-consoles/playstation5-digital-edition-console-825-gb
+# now redirects here (observed 2026-11-24).
+url = "https://www.playstation.com/de-de/ps5/digital-edition-825-gb/"
+fetcher = "http"
+integration_tested = false
+first_party_shop = true
+url_identity_verified = true
+url_identity_evidence = "JSON-LD mpn CFI-2116B01Y, title '... Konsole - 825 GB' (2026-11-24)"
+# Page banner said "Kostenlose Lieferung ab £40 Bestellwert" (sic, £ on the German site).
+free_shipping_from_eur = 40.00
+notes = "2026-11-24: 599,99 EUR, 'Nicht zum Kauf erhältlich' / 'Derzeit nicht vorrätig' while JSON-LD said InStock."
+
+[[sources]]
+id = "amazon"
+name = "Amazon.de"
+url = "https://www.amazon.de/dp/B0FN7ZG39D"
+fetcher = "http"
+extractor = "amazon"
+integration_tested = false
+required_seller = ["amazon"]
+url_identity_verified = true
+url_identity_evidence = "technical details: item model number CFI-2116, release 15 Sep 2025 (2026-11-24)"
+notes = "2026-11-24: no buy box (Amazon does not sell it; other sellers only). Captchas likely from GitHub IPs."
+
+[[sources]]
+id = "mediamarkt"
+name = "MediaMarkt"
+url = "https://www.mediamarkt.de/de/product/_sony-playstationr5-digital-edition-slim-825-gb-3012188.html"
+fetcher = "http"
+extractor = "ceconomy"
+article_id = "3012188"
+integration_tested = false
+required_seller = ["mediamarkt"]
+notes = "2026-11-24: own article 3012188 (EAN 0711719020837) 599,99 EUR, NOT_IN_ASSORTMENT; URL redirects to marketplace offer (Collectronics 1.099,99 EUR)."
+
+[[sources]]
+id = "saturn"
+name = "Saturn"
+url = "https://www.saturn.de/de/product/_sony-playstationr5-digital-edition-slim-825-gb-3012188.html"
+fetcher = "http"
+extractor = "ceconomy"
+article_id = "3012188"
+integration_tested = false
+required_seller = ["saturn"]
+notes = "2026-11-24: identical to MediaMarkt (same platform): own article NOT_IN_ASSORTMENT, marketplace redirect."
+
+[[sources]]
+id = "otto"
+name = "OTTO"
+url = "https://www.otto.de/p/playstation-playstation-5-slim-digital-edition-ps5-slim-ohne-laufwerk-825-gb-S0GFY0YO/"
+fetcher = "http"
+integration_tested = false
+required_seller = ["otto"]
+notes = "2026-11-24: only listing found is a marketplace offer (Hakla-Shop, 1.299,99 EUR) carrying a non-Sony EAN 4262451074603 -> always unverified unless OTTO itself sells it."
+
+[[sources]]
+id = "alternate"
+name = "Alternate"
+url = "https://www.alternate.de/Sony-Interactive-Entertainment/PlayStation-5-Slim-Digital-Edition-E-Chassis-Spielkonsole/html/product/100155464"
+fetcher = "http"
+integration_tested = false
+first_party_shop = true
+required_seller = ["alternate"]
+notes = "2026-11-24: 899,00 EUR, OutOfStock, seller ALTERNATE GmbH, shipping 7,99 EUR in JSON-LD, EAN 0711719020837."
+
+[[sources]]
+id = "expert"
+name = "expert"
+url = "https://www.expert.de/shop/unsere-produkte/gaming-freizeit/sony-playstation/playstation-konsolen/11364210744-playstation-5-digital-edition-modellgruppe-slim.html"
+fetcher = "http"
+integration_tested = false
+url_identity_verified = true
+url_identity_evidence = "expert.de search for EAN 0711719020837 resolved to this product page (2026-11-24)"
+notes = "2026-11-24: sold out, no structured data, no price shown. Price extraction for an in-stock page is UNKNOWN."
+
+[[sources]]
+id = "mueller"
+name = "Müller"
+url = ""
+fetcher = "http"
+notes = "not listed on mueller.de on 2026-11-24 (only PS5 1 TB disc, PS5 Pro 2 TB, disc drive)"
+
+[[sources]]
+id = "idealo"
+name = "idealo.de (price comparison)"
+kind = "comparison"
+url = "https://www.idealo.de/preisvergleich/OffersOfProduct/207748718_-playstation-5-slim-ps5-slim-digital-edition-standard-edition-825gb-sony.html"
+fetcher = "http"
+extractor = "idealo"
+url_identity_verified = true
+url_identity_evidence = "variant 'Standard Edition 825GB', product details 'Modell PS5 Digital, 825 GB, 2025' (2026-11-24)"
+notes = "2026-11-24: from 799,90 EUR incl. shipping, 5 offers (foreign shop + marketplaces). Never a verified retailer offer."
