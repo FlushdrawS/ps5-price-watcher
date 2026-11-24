@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    # Offline only: no network access to retailers, no secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - run: python -m pytest
+      - name: Config sanity check
+        run: PYTHONPATH=src python -m ps5watcher status

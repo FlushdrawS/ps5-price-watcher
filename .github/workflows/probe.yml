@@ -1,0 +1,65 @@
+name: Probe sources (manual live diagnostics)
+
+# Fetches every configured source ONCE from a GitHub-hosted runner (the same
+# network the scheduled watcher uses), prints what was extracted and why it is
+# or is not verified, and uploads the report, evidence JSON and raw HTML as an
+# artifact. Sends no notifications and changes no state. Use it to find out
+# which retailers block GitHub's datacenter IPs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Source id (empty = all), e.g. alternate"
+        required: false
+        default: ""
+      fetcher:
+        description: "Override fetcher"
+        type: choice
+        options: [configured, http, playwright]
+        default: configured
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: src
+      # Inputs are passed through env, never interpolated into the script
+      # (prevents shell injection via workflow inputs).
+      SOURCE: ${{ inputs.source }}
+      FETCHER: ${{ inputs.fetcher }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(probe --save-html debug --record --where github-actions)
+          if [ -n "$SOURCE" ]; then
+            [[ "$SOURCE" =~ ^[a-z0-9_-]{1,32}$ ]] || { echo "invalid source id"; exit 2; }
+            args+=(--source "$SOURCE")
+          fi
+          if [ "$FETCHER" != "configured" ]; then
+            args+=(--fetcher "$FETCHER")
+          fi
+          python -m ps5watcher "${args[@]}" | tee probe-report.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-${{ github.run_number }}
+          path: |
+            probe-report.txt
+            evidence/
+            debug/
+          retention-days: 7
+          if-no-files-found: ignore

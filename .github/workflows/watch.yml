@@ -1,0 +1,135 @@
+name: PS5 price watch
+
+# DEPLOYMENT IS DISABLED BY DEFAULT.
+#   * Scheduled runs do nothing until the repository VARIABLE
+#     WATCHER_ENABLED = true exists (Settings -> Secrets and variables ->
+#     Actions -> Variables).
+#   * Telegram stays off until the variable TELEGRAM_ENABLED = true and the
+#     secrets TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID exist. Until then every
+#     notification is only printed to the job log (dry run).
+#   * Manual runs ("Run workflow") always work and default to a dry run.
+#
+# SCHEDULE (all times decided in Python in Europe/Berlin, DST-safe):
+#   GitHub cron is UTC-only, often starts 5-30+ min late and can drop runs
+#   under load. So cron fires MORE often than needed and the dependency-free
+#   gate (python -m ps5watcher.gate) maps each run onto a Berlin slot:
+#     - checks: every 3 h; on Fridays every 15 min
+#     - full status report: every 3 h on every day, Fridays included
+#   A slot is checked at most once; late or duplicate runs exit in seconds.
+#   Minutes :02/:17/:32/:47 and :11 avoid the overloaded top of the hour.
+
+on:
+  schedule:
+    - cron: "11 * * * *"                 # hourly: 3 chances per 3-hour slot
+    - cron: "2,17,32,47 22,23 * * 4"     # Thu 22-24 UTC = start of Friday in Berlin (CET/CEST)
+    - cron: "2,17,32,47 * * * 5"         # Friday (UTC)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Check now, ignoring the time-slot gate"
+        type: boolean
+        default: true
+      dry_run:
+        description: "Only print notifications in the log (do not send)"
+        type: boolean
+        default: true
+      report:
+        description: "Include the full status report"
+        type: boolean
+        default: true
+
+permissions: {}   # nothing by default; each job asks for the minimum
+
+concurrency:
+  group: ps5-watch
+  cancel-in-progress: false
+
+env:
+  PS5W_DATA_DIR: ${{ github.workspace }}/watcher-data
+  STATE_BRANCH: watcher-state
+
+jobs:
+  check:
+    if: github.event_name == 'workflow_dispatch' || vars.WATCHER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read          # read-only token while handling retailer HTML and secrets
+    outputs:
+      due: ${{ steps.gate.outputs.due }}
+    env:
+      PYTHONPATH: src
+      FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      REPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.report }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Load state and history
+        run: bash scripts/state_branch.sh load
+
+      - name: Time-slot gate (Europe/Berlin, standard library only)
+        id: gate
+        run: |
+          if [ "$FORCE" = "true" ]; then python -m ps5watcher.gate --force; else python -m ps5watcher.gate; fi
+
+      - name: Install dependencies
+        if: steps.gate.outputs.due == 'true'
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Cache Playwright browser
+        if: steps.gate.outputs.due == 'true' && steps.gate.outputs.needs_browser == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Chromium (only if a source uses fetcher = "playwright")
+        if: steps.gate.outputs.due == 'true' && steps.gate.outputs.needs_browser == 'true'
+        run: python -m playwright install --with-deps chromium
+
+      - name: Check prices and notify
+        if: steps.gate.outputs.due == 'true'
+        env:
+          TELEGRAM_ENABLED: ${{ vars.TELEGRAM_ENABLED }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          args=()
+          [ "$FORCE" = "true" ] && args+=(--force)
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          [ "$REPORT" = "true" ] && args+=(--report)
+          python -m ps5watcher run "${args[@]}"
+
+      - name: Hand data to the persist job
+        if: always() && steps.gate.outputs.due == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: watcher-data
+          path: watcher-data/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  persist:
+    # Separate job: the only one with write access, and it never runs retailer
+    # parsing code or sees Telegram secrets. It only pushes the data branch.
+    needs: check
+    if: always() && needs.check.outputs.due == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: watcher-data
+          path: watcher-data/
+      - name: Save state and history to the watcher-state branch
+        run: bash scripts/state_branch.sh save
